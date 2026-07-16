@@ -1,0 +1,23 @@
+{
+  "name": "arjayby",
+  "owner": {
+    "name": "arjayby",
+    "url": "https://github.com/arjayby"
+  },
+  "description": "arjayby's agent skills, as an installable Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "arjayby-skills",
+      "source": "./",
+      "description": "Automation around Matt Pocock's engineering skills — unattended ticket-frontier shipping.",
+      "category": "engineering",
+      "keywords": [
+        "engineering",
+        "skills",
+        "automation",
+        "tickets",
+        "implement"
+      ]
+    }
+  ]
+}
