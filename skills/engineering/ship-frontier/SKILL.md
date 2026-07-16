@@ -23,6 +23,21 @@ This skill owns only the ring around it:
 - **The issue tracker must be GitHub.** Read `docs/agents/issue-tracker.md` to confirm. The loop needs a machine-readable frontier and a PR surface; a local-markdown tracker has neither. Any other tracker: say so plainly and stop.
 - Blocking edges should be **GitHub native issue dependencies** — what `/to-tickets` writes. Only if the repo has no dependency edges at all, fall back to parsing a `Blocked by: #n` line from the issue body and checking each referenced issue is closed.
 
+## Running it
+
+Each ticket is handed to a nested `claude -p ... --dangerously-skip-permissions`. **An interactive session will usually refuse to launch that** — the permission classifier denies a nested run that bypasses permissions, and the loop dies on its first ticket. Either:
+
+- **run the whole loop headless from a terminal** (preferred) — the parent already bypasses permissions, so nothing is left to deny:
+  ```bash
+  claude -p "/ship-frontier" --dangerously-skip-permissions
+  ```
+- **or allow the nested call** in `.claude/settings.json` before running it interactively:
+  ```json
+  { "permissions": { "allow": ["Bash(claude -p:*)"] } }
+  ```
+
+If the nested run is denied, stop and tell the user which of these to do. Do not fall back to implementing the ticket yourself in the current context — that defeats the fresh-context guarantee and quietly turns one run into an unbounded one.
+
 ## Arguments
 
 - _(none)_ — ship every ticket that is or becomes unblocked, until the frontier is empty
@@ -40,6 +55,8 @@ Stop with a clear message if any of these fail. Do not try to repair them:
 - `gh auth status` succeeds
 - the tracker is GitHub
 
+Then run `git fetch origin` before computing anything. A stale local default branch makes already-merged work look unbuilt — squash-merged branches keep their local commits, so `git log main..<branch>` reports work that is in fact already on the remote. Diagnose against `origin/<default>`, never a local branch you haven't just fetched.
+
 Then record, once:
 
 - the default branch — `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`
@@ -49,28 +66,49 @@ Those two commands are your pre-push gate. Find them now, not mid-loop. If the r
 
 ### 2. Compute the plan
 
-A ticket is on the **frontier** when it is open, labelled `ready-for-agent`, and has no open blockers.
+A ticket belongs in the plan when it is open, labelled `ready-for-agent`, **and is actually a ticket**.
 
 ```bash
 gh issue list --label ready-for-agent --state open --json number,title --jq '.[] | "\(.number)\t\(.title)"'
 ```
 
-For each, read its open-blocker count. `blocked_by` counts only *open* blockers, which is exactly the live gate:
+**Screen out parent specs before anything else.** `/to-spec` publishes specs and PRDs as issues in the same tracker, and a spec can easily carry `ready-for-agent` — usually because it was labelled before it was sliced. Handing one to `/implement` turns it loose on an entire feature in a single run: the opposite of a tracer bullet, and its children are usually already built. Two independent signals, either one disqualifying:
+
+**It has no acceptance criteria.** `/to-tickets` always writes `## Acceptance criteria` with `- [ ]` checkboxes. A spec has none.
+
+```bash
+gh issue view <n> --json body -q .body | grep -cE '^- \[[ x]\]'
+```
+
+**Other issues name it as their parent.** `/to-tickets` opens each child with a `## Parent` section pointing back at the spec. Build the map once and check every candidate against it:
+
+```bash
+gh issue list --state all --limit 200 --json number,body \
+  --jq '[ .[] | select(.body != null) | select(.body | test("## Parent"))
+          | { child: .number,
+              parent: (.body | capture("## Parent\\s+#(?<p>[0-9]+)") | .p | tonumber) } ]
+        | group_by(.parent) | map({ parent: .[0].parent, children: [.[].child] | sort })'
+```
+
+Anything appearing as a `parent` is a spec. Exclude it, and name it in the step-3 confirmation along with the reason. **Never implement one, and never close or relabel one** — `/to-tickets` is explicit that parent issues are not yours to modify. If every child of a parent is closed, say so and let the user decide what to do about it.
+
+Then, for each surviving ticket, read its open-blocker count. `blocked_by` counts only *open* blockers, which is exactly the live gate:
 
 ```bash
 gh api repos/{owner}/{repo}/issues/<n> --jq '.issue_dependencies_summary.blocked_by'
 ```
 
-Zero means shippable now. Non-zero means a blocker is still open — but it will drop to zero as this run merges those blockers, so it belongs in the plan too.
+Zero means shippable now. Non-zero means a blocker is still open — it still belongs in the plan, because this run will merge those blockers and clear it.
 
 Order the plan **ascending by issue number**: `/to-tickets` publishes in dependency order, so the lowest open number is the earliest slice. Don't trust that ordering blindly — you re-verify each ticket's blocker count at (4a) before touching it.
 
-If nothing carries the label, report what's left and why, then stop.
+If nothing survives the screen, report what you found and why, then stop.
 
 ### 3. Confirm once
 
 Print the ordered plan — issue number, title, branch name, and for each blocked ticket the blockers this run will clear first. Then state plainly:
 
+- anything the step-2 screen excluded, and why — a labelled spec is a mislabelling the user will want to know about
 - each ticket will be implemented, PR'd, and **squash-merged into `<default>` with no further review**
 - what the verification gate actually is, and whether CI exists to back it up
 - the loop stops at the first failure and leaves that branch open for inspection
