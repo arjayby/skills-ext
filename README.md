@@ -60,16 +60,27 @@ Then it recomputes the frontier — the merge just closed a blocker, so dependen
 /ship-frontier --no-merge   # stop at each PR
 ```
 
-Run it headless, from a terminal:
+#### Running it
+
+Start the session with permissions already bypassed, either way. Each ticket is handed to a nested `claude -p ... --dangerously-skip-permissions`, and **a session under the normal permission classifier denies that outright** — the loop dies on ticket one. Bypassing at the top removes the classifier, so the nested call goes through.
+
+**Interactive**, to watch it work. Every step shows up in the TUI, and the confirmation works normally because someone is there to answer — so no `--yes`:
 
 ```bash
-claude -p "/ship-frontier --dry-run" --dangerously-skip-permissions   # see the plan
-claude -p "/ship-frontier --yes" --dangerously-skip-permissions       # ship it
+claude --dangerously-skip-permissions
+> /ship-frontier
 ```
 
-An interactive session's permission classifier denies the nested `claude -p --dangerously-skip-permissions` each ticket needs, so the loop dies on ticket one. Running the whole thing headless means the parent already bypasses permissions and nothing is left to deny. Alternatively allow `Bash(claude -p:*)` in `.claude/settings.json` and run it interactively.
+**Headless**, to walk away:
 
-**`--yes` is required headless.** With nobody to answer the confirmation, a headless run without it prints the plan and ships nothing — the invocation is never taken as consent.
+```bash
+claude -p "/ship-frontier --yes" --dangerously-skip-permissions \
+  --output-format stream-json --verbose
+```
+
+Both flags matter. **`--yes` is mandatory headless** — with nobody to answer the confirmation, the run plans the batch, asks a question, and exits having shipped nothing while reporting success; the invocation is never taken as consent. And **plain `claude -p` prints nothing until the whole run finishes**, so without `--output-format stream-json --verbose` you get a blank terminal for however many hours the batch takes, indistinguishable from a hang. Per-ticket detail lands in `.scratch/ship-frontier/<n>.log`, which `tail -f` follows.
+
+Allowing `Bash(claude -p:*)` in `.claude/settings.local.json` is **not** a substitute: it unblocks that one call while every `git`, `gh`, and test command still prompts, several times per ticket.
 
 #### How it works
 

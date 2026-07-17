@@ -25,25 +25,32 @@ This skill owns only the ring around it:
 
 ## Running it
 
-The headless invocation is the whole point, so get it right — it needs `--yes`, or the run plans the batch, asks a question nobody is there to answer, and exits having shipped nothing:
+Either way, the session must start with permissions already bypassed. Each ticket is handed to a nested `claude -p ... --dangerously-skip-permissions`, and **a session running under the normal permission classifier denies that outright** — the loop dies on its first ticket. Bypassing at the top removes the classifier, so the nested call goes through.
+
+**Interactive — best for watching a run:**
+
+```bash
+claude --dangerously-skip-permissions
+> /ship-frontier
+```
+
+Every step is visible in the TUI as it happens, and step 3 works normally because there is someone to answer it — so `--yes` is unnecessary here. Read the plan, approve it, watch it go.
+
+**Headless — best for walking away:**
 
 ```bash
 claude -p "/ship-frontier --yes" --dangerously-skip-permissions \
   --output-format stream-json --verbose
 ```
 
-Two flags are doing real work there:
+Both flags are load-bearing:
 
-- **`--yes`** satisfies the step-3 confirmation. Print mode has no interactive user, so a run without it always no-ops.
+- **`--yes`** satisfies step 3. Print mode has nobody to answer, so a run without it plans the batch, asks a question, and exits having shipped nothing — reporting success while doing exactly nothing.
 - **`--output-format stream-json --verbose`** is the only way to see progress. Plain `claude -p` prints *nothing* until the entire run finishes — a blank terminal for however many hours the batch takes, indistinguishable from a hang. Per-ticket detail lands in `.scratch/ship-frontier/<n>.log`, which `tail -f` follows.
 
-**Headless is preferred because an interactive session will usually refuse to launch the nested run** — the permission classifier denies a nested `claude -p` that bypasses permissions, and the loop dies on its first ticket. To run it interactively anyway, allow the nested call in `.claude/settings.json` first:
+Allowing `Bash(claude -p:*)` in `.claude/settings.local.json` is **not** a substitute. It unblocks the nested call alone, while every `git`, `gh`, and test command in the loop still prompts — several times per ticket, for every ticket. That is not an unattended run.
 
-```json
-{ "permissions": { "allow": ["Bash(claude -p:*)"] } }
-```
-
-If a nested run is denied, stop and tell the user which of these to do. Never fall back to implementing the ticket yourself in the current context — that defeats the fresh-context guarantee and quietly turns one bounded run into an unbounded one.
+If a nested run is denied anyway, stop and say so. Never fall back to implementing the ticket yourself in the current context — that defeats the fresh-context guarantee and quietly turns one bounded run into an unbounded one.
 
 ## Arguments
 
