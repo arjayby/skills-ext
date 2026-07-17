@@ -29,7 +29,7 @@ Each ticket is handed to a nested `claude -p ... --dangerously-skip-permissions`
 
 - **run the whole loop headless from a terminal** (preferred) — the parent already bypasses permissions, so nothing is left to deny:
   ```bash
-  claude -p "/ship-frontier" --dangerously-skip-permissions
+  claude -p "/ship-frontier --yes" --dangerously-skip-permissions
   ```
 - **or allow the nested call** in `.claude/settings.json` before running it interactively:
   ```json
@@ -42,6 +42,7 @@ If the nested run is denied, stop and tell the user which of these to do. Do not
 
 - _(none)_ — ship every ticket that is or becomes unblocked, until the frontier is empty
 - `<n> [<n>...]` — ship only these issues, in the order given, skipping the frontier query
+- `--yes` — take the step-3 confirmation as given. **Required to ship anything headless**, where nobody is there to answer.
 - `--no-merge` — stop after opening each PR. Every later ticket then branches off a `main` that lacks the earlier work, so this is only sound for a single ticket or for tickets with no edges between them. Say so if the user combines it with a dependent batch.
 - `--dry-run` — print the plan and stop
 
@@ -114,9 +115,18 @@ Print the ordered plan — issue number, title, branch name, and for each blocke
 - what the verification gate actually is, and whether CI exists to back it up
 - the loop stops at the first failure and leaves that branch open for inspection
 
-Take one confirmation. After that, run to completion without prompting again.
+Then take one confirmation, and after it run to completion without prompting again.
 
-On `--dry-run`, stop here.
+**Resolve the confirmation deterministically — never by judgement:**
+
+| | |
+|---|---|
+| `--dry-run` | stop here, always |
+| `--yes` | the flag *is* the confirmation. Print the plan, then proceed |
+| interactive, no `--yes` | ask, and wait for a clear yes |
+| **headless (`claude -p`), no `--yes`** | **print the plan and stop** |
+
+That last row is the one that matters. A headless run has nobody to ask, so an unattended `/ship-frontier` with no `--yes` must behave exactly like `--dry-run` — print the plan, ship nothing, and say that `--yes` is what starts it. Never treat the invocation itself as the confirmation, and never decide for yourself that proceeding is what the user meant: the cost of guessing wrong is a queue of unreviewed merges into the default branch.
 
 ### 4. Ship each ticket
 

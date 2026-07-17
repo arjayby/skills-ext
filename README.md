@@ -53,11 +53,23 @@ For each unblocked `ready-for-agent` ticket, in dependency order:
 Then it recomputes the frontier — the merge just closed a blocker, so dependents become shippable — and takes the next ticket. It stops at the first failure.
 
 ```bash
-/ship-frontier              # drain the whole frontier
+/ship-frontier              # drain the whole frontier (asks first)
 /ship-frontier --dry-run    # print the plan, ship nothing
-/ship-frontier 4 14         # just these, in this order
+/ship-frontier --yes        # skip the confirmation — required headless
+/ship-frontier 14 15        # just these, in this order
 /ship-frontier --no-merge   # stop at each PR
 ```
+
+Run it headless, from a terminal:
+
+```bash
+claude -p "/ship-frontier --dry-run" --dangerously-skip-permissions   # see the plan
+claude -p "/ship-frontier --yes" --dangerously-skip-permissions       # ship it
+```
+
+An interactive session's permission classifier denies the nested `claude -p --dangerously-skip-permissions` each ticket needs, so the loop dies on ticket one. Running the whole thing headless means the parent already bypasses permissions and nothing is left to deny. Alternatively allow `Bash(claude -p:*)` in `.claude/settings.json` and run it interactively.
+
+**`--yes` is required headless.** With nobody to answer the confirmation, a headless run without it prints the plan and ships nothing — the invocation is never taken as consent.
 
 #### How it works
 
