@@ -61,8 +61,9 @@ Then record, once:
 
 - the default branch — `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`
 - the repo's **typecheck** and **test** commands, from `package.json` scripts, a `Makefile`, or `CLAUDE.md` / `AGENTS.md`
+- **whether the repo has CI** — does `.github/workflows/` hold anything that triggers on `pull_request`? This decides whether step 4h waits.
 
-Those two commands are your pre-push gate. Find them now, not mid-loop. If the repo has no CI workflows, they are the *only* thing between generated code and the default branch — say so in the confirmation at step 3.
+The typecheck and test commands are your pre-push gate. Find them now, not mid-loop. If the repo has no CI, they are the *only* thing between generated code and the default branch — say so in the confirmation at step 3.
 
 ### 2. Compute the plan
 
@@ -165,9 +166,19 @@ EOF
 
 `Closes #<n>` is load-bearing. It closes the issue on merge, and closing is what drops the open-blocker count on every dependent. Omit it and the frontier never advances.
 
-**h. Merge.** `gh pr merge <pr> --squash --delete-branch`
+**h. Wait for CI — if preflight found any.** Skip straight to (i) when the repo has no workflows; there is nothing to wait for and `gh pr checks` exits non-zero when no checks are reported.
 
-**i. Confirm the close.** `gh issue view <n> --json state -q .state` must be `CLOSED`. If it isn't, the auto-close didn't fire — close it yourself with `gh issue close <n>`, or the next frontier query hands you this same ticket again. Add it to the shipped set either way.
+```bash
+gh pr checks <pr> --watch --fail-fast
+```
+
+**Do not delegate this wait to GitHub.** `gh pr merge --auto` only defers a merge when a *required* status check exists, and required checks come from branch protection — which is unavailable on private repos without GitHub Pro. Where protection is off, `--auto` merges immediately and CI becomes decorative: the code lands on the default branch and the workflow simply goes red behind it. Waiting here is what makes CI a gate rather than a notification.
+
+A non-zero exit means a check failed. **Stop the loop**, exactly as at (e) — leave the branch and the open PR alone, and report the failing check.
+
+**i. Merge.** `gh pr merge <pr> --squash --delete-branch`
+
+**j. Confirm the close.** `gh issue view <n> --json state -q .state` must be `CLOSED`. If it isn't, the auto-close didn't fire — close it yourself with `gh issue close <n>`, or the next frontier query hands you this same ticket again. Add it to the shipped set either way.
 
 Loop back to (a).
 

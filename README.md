@@ -47,7 +47,8 @@ For each unblocked `ready-for-agent` ticket, in dependency order:
 2. `git checkout -b feat/<slug>`
 3. `/implement` the ticket **in a fresh context**
 4. verify: clean exit, a real commit, clean tree, typecheck and tests green
-5. push, open a PR that `Closes #n`, squash-merge
+5. push, open a PR that `Closes #n`
+6. wait for CI to go green, then squash-merge
 
 Then it recomputes the frontier — the merge just closed a blocker, so dependents become shippable — and takes the next ticket. It stops at the first failure.
 
@@ -73,9 +74,11 @@ Then it recomputes the frontier — the merge just closed a blocker, so dependen
 - Tickets labelled `ready-for-agent`
 - `gh` authenticated, clean working tree
 
+**It waits for CI itself, rather than trusting GitHub to.** `gh pr merge --auto` only defers a merge when a *required* status check exists, and required checks come from branch protection — unavailable on private repos without GitHub Pro. Where protection is off, `--auto` merges immediately and CI becomes decorative: the code lands on `main` and the workflow goes red behind it. So the loop blocks on `gh pr checks --watch --fail-fast` before merging, which makes CI a real gate on any repo.
+
 #### Before you run it
 
-This merges to your default branch with no human review, and each ticket runs with `--dangerously-skip-permissions`. The verification gate — clean exit, real commit, clean tree, typecheck, tests — is doing the job a human reviewer and CI would otherwise do. **If your repo has no CI, that gate is the only thing between generated code and `main`.** Worth having branch protection and a CI workflow before you leave this running.
+This merges to your default branch with no human review, and each ticket runs with `--dangerously-skip-permissions`. Two things stand between generated code and `main`: the local gate (clean exit, real commit, clean tree, typecheck, tests) and CI. **If your repo has no CI, only the local gate is left.** Worth adding a workflow before you leave this running.
 
 It confirms the batch once before the first ticket, then runs to completion. Use `--dry-run` first.
 
