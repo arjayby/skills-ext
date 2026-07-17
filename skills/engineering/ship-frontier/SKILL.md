@@ -25,26 +25,33 @@ This skill owns only the ring around it:
 
 ## Running it
 
-Each ticket is handed to a nested `claude -p ... --dangerously-skip-permissions`. **An interactive session will usually refuse to launch that** — the permission classifier denies a nested run that bypasses permissions, and the loop dies on its first ticket. Either:
+The headless invocation is the whole point, so get it right — it needs `--yes`, or the run plans the batch, asks a question nobody is there to answer, and exits having shipped nothing:
 
-- **run the whole loop headless from a terminal** (preferred) — the parent already bypasses permissions, so nothing is left to deny:
-  ```bash
-  claude -p "/ship-frontier --yes" --dangerously-skip-permissions
-  ```
-- **or allow the nested call** in `.claude/settings.json` before running it interactively:
-  ```json
-  { "permissions": { "allow": ["Bash(claude -p:*)"] } }
-  ```
+```bash
+claude -p "/ship-frontier --yes" --dangerously-skip-permissions \
+  --output-format stream-json --verbose
+```
 
-If the nested run is denied, stop and tell the user which of these to do. Do not fall back to implementing the ticket yourself in the current context — that defeats the fresh-context guarantee and quietly turns one run into an unbounded one.
+Two flags are doing real work there:
+
+- **`--yes`** satisfies the step-3 confirmation. Print mode has no interactive user, so a run without it always no-ops.
+- **`--output-format stream-json --verbose`** is the only way to see progress. Plain `claude -p` prints *nothing* until the entire run finishes — a blank terminal for however many hours the batch takes, indistinguishable from a hang. Per-ticket detail lands in `.scratch/ship-frontier/<n>.log`, which `tail -f` follows.
+
+**Headless is preferred because an interactive session will usually refuse to launch the nested run** — the permission classifier denies a nested `claude -p` that bypasses permissions, and the loop dies on its first ticket. To run it interactively anyway, allow the nested call in `.claude/settings.json` first:
+
+```json
+{ "permissions": { "allow": ["Bash(claude -p:*)"] } }
+```
+
+If a nested run is denied, stop and tell the user which of these to do. Never fall back to implementing the ticket yourself in the current context — that defeats the fresh-context guarantee and quietly turns one bounded run into an unbounded one.
 
 ## Arguments
 
 - _(none)_ — ship every ticket that is or becomes unblocked, until the frontier is empty
 - `<n> [<n>...]` — ship only these issues, in the order given, skipping the frontier query
-- `--yes` — take the step-3 confirmation as given. **Required to ship anything headless**, where nobody is there to answer.
+- `--yes` — skip the step-3 confirmation and start shipping. **Required for any headless run.** Interactively it is optional; without it you get the plan and a prompt.
 - `--no-merge` — stop after opening each PR. Every later ticket then branches off a `main` that lacks the earlier work, so this is only sound for a single ticket or for tickets with no edges between them. Say so if the user combines it with a dependent batch.
-- `--dry-run` — print the plan and stop
+- `--dry-run` — print the plan and stop. Beats `--yes` if both are passed.
 
 ## Process
 
@@ -61,10 +68,14 @@ Then run `git fetch origin` before computing anything. A stale local default bra
 Then record, once:
 
 - the default branch — `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`
-- the repo's **typecheck** and **test** commands, from `package.json` scripts, a `Makefile`, or `CLAUDE.md` / `AGENTS.md`
-- **whether the repo has CI** — does `.github/workflows/` hold anything that triggers on `pull_request`? This decides whether step 4h waits.
+- **whether the repo has CI** — does `.github/workflows/` hold anything triggering on `pull_request`? This decides whether step 4h waits.
+- **the local gate** — the commands that must pass before you push.
 
-The typecheck and test commands are your pre-push gate. Find them now, not mid-loop. If the repo has no CI, they are the *only* thing between generated code and the default branch — say so in the confirmation at step 3.
+Derive the local gate from the CI workflow when there is one: read it and mirror its sequence exactly. A local gate that differs from CI only discovers the same failure later and slower. With no CI, fall back to the repo's **typecheck** and **test** commands from `package.json` scripts, a `Makefile`, or `CLAUDE.md` / `AGENTS.md`.
+
+**Mirror CI's order, not just its commands.** A build step often exists to generate files a later step depends on — gitignored codegen a typecheck cannot resolve without it. Reorder that and the gate fails on errors that have nothing to do with the ticket.
+
+Find all of this now, not mid-loop. If the repo has no CI, the local gate is the *only* thing between generated code and the default branch — say so in the confirmation at step 3.
 
 ### 2. Compute the plan
 
@@ -115,18 +126,12 @@ Print the ordered plan — issue number, title, branch name, and for each blocke
 - what the verification gate actually is, and whether CI exists to back it up
 - the loop stops at the first failure and leaves that branch open for inspection
 
-Then take one confirmation, and after it run to completion without prompting again.
+Then, depending on how you were invoked:
 
-**Resolve the confirmation deterministically — never by judgement:**
+- **With `--yes`** — print the plan and start shipping immediately. Ask nothing. A question here has nobody to answer it, so the run would end having shipped nothing while reporting success.
+- **Without `--yes`** — take one confirmation. After that, run to completion without prompting again.
 
-| | |
-|---|---|
-| `--dry-run` | stop here, always |
-| `--yes` | the flag *is* the confirmation. Print the plan, then proceed |
-| interactive, no `--yes` | ask, and wait for a clear yes |
-| **headless (`claude -p`), no `--yes`** | **print the plan and stop** |
-
-That last row is the one that matters. A headless run has nobody to ask, so an unattended `/ship-frontier` with no `--yes` must behave exactly like `--dry-run` — print the plan, ship nothing, and say that `--yes` is what starts it. Never treat the invocation itself as the confirmation, and never decide for yourself that proceeding is what the user meant: the cost of guessing wrong is a queue of unreviewed merges into the default branch.
+On `--dry-run`, stop here regardless.
 
 ### 4. Ship each ticket
 
@@ -157,7 +162,7 @@ Redirect; never pipe into `tee`. A pipe hands you `tee`'s exit code instead of C
 1. `rc` is `0`
 2. `git rev-parse HEAD` differs from (c) — `/implement` committed something
 3. `git status --porcelain` is empty — it left nothing behind
-4. the typecheck and test commands from (1) both pass
+4. the local gate from (1) passes, run in its recorded order
 
 Any failure → **stop the entire loop.** Leave the branch and its commits exactly as they are. Do not retry, do not patch it yourself, do not skip ahead to the next ticket. Report and hand back.
 
